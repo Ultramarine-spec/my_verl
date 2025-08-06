@@ -518,6 +518,97 @@ class SGLangRollout(BaseRollout):
         if self.config.multi_turn.enable:
             return self._req_level_generate_sequences(prompts, **kwargs)
         return self._batch_level_generate_sequences(prompts, **kwargs)
+    
+    @GPUMemoryLogger(role="sglang rollout", logger=logger)
+    @torch.no_grad()
+    def generate_evaluation(self, data, prompt_template, **kwargs):
+        prompts_str = data.non_tensor_batch["prompts_str"]
+        responses_str = data.non_tensor_batch["responses_str"]
+        extras = data.non_tensor_batch["extras"]
+
+        responses_str = [x.split("</think>")[-1] if "</think>" in x else x for x in responses_str]
+        
+        if '<CHECKLIST>' in prompt_template:
+            messages = [
+                [{"role": "user", "content": prompt_template.replace("<INSTRUCTION>", prompt_str).replace("<RESPONSE>", response_str).replace("<CHECKLIST>", "\n".join(extra['checklist']))}] for prompt_str, response_str, extra in zip(prompts_str, responses_str, extras)
+            ]
+        else:
+            messages = [
+                [{"role": "user", "content": prompt_template.replace("<INSTRUCTION>", prompt_str).replace("<RESPONSE>", response_str)}] for prompt_str, response_str in zip(prompts_str, responses_str)
+            ]
+
+        prompts = [
+            self.tokenizer.apply_chat_template(
+                message,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False
+            ) for message in messages
+        ]
+
+        do_sample = data.meta_info.get("do_sample", True)
+        is_validate = data.meta_info.get("validate", False)
+        if not do_sample:
+            kwargs = dict(
+                n=1,
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                repetition_penalty=1.0,
+                temperature=0,
+                top_p=1,
+                top_k=-1,
+                ignore_eos=False,
+                min_new_tokens=0,
+                max_new_tokens=self.config.response_length,
+                skip_special_tokens=True,
+                spaces_between_special_tokens=True,
+            )
+        elif is_validate:
+            kwargs = dict(
+                top_k=self.config.val_kwargs.top_k,
+                top_p=self.config.val_kwargs.top_p,
+                temperature=self.config.val_kwargs.temperature,
+                n=1,  # if validate, already repeat in ray_trainer
+            )
+        
+        # users can customize different sampling_params at different run
+        with self.update_sampling_params(**kwargs):
+            print(f"{self.sampling_params=}")
+            if self._tp_rank == 0:
+                loop = asyncio.get_event_loop()
+                output = loop.run_until_complete(
+                    self._engine.async_generate(
+                        prompt=prompts,
+                        sampling_params=self.sampling_params,
+                        return_logprob=False,
+                    )
+                )
+            else:
+                output = None
+
+            # Most naive implementation, can extract tensor and send via gloo if too slow
+            dist.barrier()
+            [output] = broadcast_pyobj(
+                data=[output],
+                rank=self._rank,
+                dist_group=self._device_mesh_cpu["tp"].get_group(),
+                src=self._device_mesh_cpu["tp"].mesh[0].item(),
+                force_cpu_device=False,
+            )
+
+        non_tensor_batch = {
+            "evaluations": np.array([o['text'] for o in output], dtype=object),
+        }
+
+        outputs = DataProto(non_tensor_batch=non_tensor_batch)
+
+        # free cache engine
+        if self.config.free_cache_engine and self._engine is not None:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(self._engine.flush_cache())
+
+        return outputs
+        
 
     @GPUMemoryLogger(role="sglang rollout", logger=logger)
     @torch.no_grad()

@@ -155,6 +155,7 @@ class TaskRunner:
             train_sampler=train_sampler,
             device_name=config.trainer.device,
         )
+        import pdb; pdb.set_trace()
         trainer.init_workers()
         trainer.fit()
 

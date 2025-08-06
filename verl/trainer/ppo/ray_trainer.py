@@ -988,6 +988,8 @@ class RayPPOTrainer:
                 timing_raw = {}
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
 
+                print(batch.batch["input_ids"].shape)
+
                 # pop those keys for generation
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
                 non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
@@ -1168,6 +1170,8 @@ class RayPPOTrainer:
                             inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
                             outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
                             scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
+                            if not reward_extra_infos_dict:
+                                reward_extra_infos_dict = {k: v.tolist() for k, v in batch.non_tensor_batch.items()}
                             self._dump_generations(
                                 inputs=inputs,
                                 outputs=outputs,

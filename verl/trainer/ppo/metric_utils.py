@@ -103,6 +103,11 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
     sequence_score = batch.batch["token_level_scores"].sum(-1)
     sequence_reward = batch.batch["token_level_rewards"].sum(-1)
 
+
+    length_reward = batch.non_tensor_batch.get("length_reward", None)
+    length_reward = length_reward[length_reward != -1] if length_reward is not None else None
+    checklist_reward = batch.non_tensor_batch.get("checklist_reward", None)
+
     advantages = batch.batch["advantages"]
     returns = batch.batch["returns"]
 
@@ -135,6 +140,12 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
         "critic/rewards/mean": torch.mean(sequence_reward).detach().item(),
         "critic/rewards/max": torch.max(sequence_reward).detach().item(),
         "critic/rewards/min": torch.min(sequence_reward).detach().item(),
+        "critic/length_rewards/mean": np.mean(length_reward) if length_reward is not None else 0.0,
+        "critic/length_rewards/max": np.max(length_reward) if length_reward is not None else 0.0,
+        "critic/length_rewards/min": np.min(length_reward) if length_reward is not None else 0.0,
+        "critic/checklist_rewards/mean": np.mean(checklist_reward) if checklist_reward is not None else 0.0,
+        "critic/checklist_rewards/max": np.max(checklist_reward) if checklist_reward is not None else 0.0,
+        "critic/checklist_rewards/min": np.min(checklist_reward) if checklist_reward is not None else 0.0,
         # adv
         "critic/advantages/mean": torch.mean(valid_adv).detach().item(),
         "critic/advantages/max": torch.max(valid_adv).detach().item(),

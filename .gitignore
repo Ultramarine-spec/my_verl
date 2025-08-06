@@ -8,6 +8,8 @@
 **/*.tar.gz
 **/playground
 **/wandb
+**/0-verl-data
+**/1-verl-outputs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
